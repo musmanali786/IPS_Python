@@ -282,3 +282,4 @@ if __name__ == "__main__":
     window = GraphDigitizer()
     window.show()
     sys.exit(app.exec_())
+    
