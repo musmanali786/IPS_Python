@@ -125,8 +125,8 @@
                 </div>
                 <div class="card-body">
                     <ul id="points-list" class="list-group">
-                        {% for i, point in enumerate(state.points) %}
-                            <li class="list-group-item">Point {{ i+1 }}: ({{ "%.2f"|format(point[0]) }}, {{ "%.2f"|format(point[1]) }})</li>
+                        {% for point in state.points %}
+                            <li class="list-group-item">Point {{ loop.index }}: ({{ "%.2f"|format(point[0]) }}, {{ "%.2f"|format(point[1]) }})</li>
                         {% endfor %}
                     </ul>
                 </div>
