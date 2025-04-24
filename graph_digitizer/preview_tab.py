@@ -1,6 +1,6 @@
 import json
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                            QFileDialog, QListWidget, QMessageBox)
+                            QFileDialog, QListWidget, QMessageBox, QInputDialog)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtCore import Qt
@@ -31,6 +31,10 @@ class PreviewTab(QWidget):
         self.clear_btn.clicked.connect(self.clear_all)
         self.controls.addWidget(self.clear_btn)
         
+        self.rename_btn = QPushButton("Rename Graph")
+        self.rename_btn.clicked.connect(self.rename_graph)
+        self.controls.addWidget(self.rename_btn)
+        
         self.export_btn = QPushButton("Export Combined PDF")
         self.export_btn.clicked.connect(self.export_combined_pdf)
         self.controls.addWidget(self.export_btn)
@@ -39,7 +43,8 @@ class PreviewTab(QWidget):
         
         # Loaded graphs list
         self.graphs_list = QListWidget()
-        self.graphs_list.setSelectionMode(QListWidget.MultiSelection)
+        self.graphs_list.setSelectionMode(QListWidget.SingleSelection)
+        self.graphs_list.itemDoubleClicked.connect(self.rename_graph)
         self.layout.addWidget(self.graphs_list)
     
     def load_json(self):
@@ -61,6 +66,27 @@ class PreviewTab(QWidget):
         
         self.update_preview()
     
+    def rename_graph(self):
+        selected_items = self.graphs_list.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Warning", "Please select a graph to rename.")
+            return
+            
+        selected_item = selected_items[0]
+        current_name = selected_item.text()
+        row = self.graphs_list.row(selected_item)
+        
+        new_name, ok = QInputDialog.getText(
+            self, "Rename Graph", 
+            "Enter new graph name:", 
+            text=current_name
+        )
+        
+        if ok and new_name:
+            selected_item.setText(new_name)
+            self.graph_data[row]["name"] = new_name
+            self.update_preview()
+    
     def clear_all(self):
         self.graph_data = []
         self.graphs_list.clear()
@@ -77,22 +103,57 @@ class PreviewTab(QWidget):
             x_vals = [p[0] for p in data["points"]]
             y_vals = [p[1] for p in data["points"]]
             
-            ax.plot(
-                x_vals, y_vals, 
-                'o-', 
-                color=data.get("color", "#1f77b4"),
-                label=data.get("name", "Unnamed Graph")
-            )
+            # Get styling from data or use defaults
+            color = data.get("line_color", data.get("color", "#1f77b4"))
+            marker = data.get("marker_style", "o")
+            linestyle = '-'  # Default line style
+            
+            # Get font properties or use defaults
+            axis_font = data.get("axis_font", {'family': 'sans-serif', 'size': 11})
+            title_font = data.get("title_font", {'family': 'sans-serif', 'size': 12, 'weight': 'bold'})
+            
+            # Plot with the specified style
+            if marker.lower() == "none":
+                ax.plot(x_vals, y_vals, 
+                       color=color, 
+                       linestyle=linestyle,
+                       label=data.get("name", "Unnamed Graph"))
+            else:
+                ax.plot(x_vals, y_vals, 
+                       color=color, 
+                       marker=marker,
+                       linestyle=linestyle,
+                       label=data.get("name", "Unnamed Graph"))
         
         if self.graph_data:
             first_data = self.graph_data[0]
-            ax.set_xlabel(first_data.get("x_label", "X Axis"))
-            ax.set_ylabel(first_data.get("y_label", "Y Axis"))
+            
+            # Set labels with font properties
+            ax.set_xlabel(first_data.get("x_label", "X Axis"), fontdict=axis_font)
+            ax.set_ylabel(first_data.get("y_label", "Y Axis"), fontdict=axis_font)
+            
+            # Set tick labels with the same font properties
+            for label in ax.get_xticklabels():
+                label.set_fontproperties(axis_font)
+            for label in ax.get_yticklabels():
+                label.set_fontproperties(axis_font)
+            
             ax.set_xlim(first_data.get("x_min", 0), first_data.get("x_max", 10))
             ax.set_ylim(first_data.get("y_min", 0), first_data.get("y_max", 10))
+            
+            # Set title if available
+            if "name" in first_data:
+                ax.set_title(first_data["name"], fontdict=title_font, pad=20)
         
         ax.grid(True)
-        ax.legend(loc='upper right')
+        
+        # Add legend with consistent font
+        if self.graph_data:
+            axis_font = self.graph_data[0].get("axis_font", {'family': 'sans-serif', 'size': 11})
+            ax.legend(loc='upper right', 
+                     prop={'family': axis_font['family'], 
+                           'size': axis_font['size']})
+        
         self.canvas.draw()
     
     def export_combined_pdf(self):
@@ -121,21 +182,62 @@ class PreviewTab(QWidget):
                 x_vals = [p[0] for p in data["points"]]
                 y_vals = [p[1] for p in data["points"]]
                 
-                ax.plot(
-                    x_vals, y_vals, 
-                    'o-', 
-                    color=data.get("color", "#1f77b4"),
-                    label=data.get("name", "Unnamed Graph")
-                )
+                # Get styling from data or use defaults
+                color = data.get("line_color", data.get("color", "#1f77b4"))
+                marker = data.get("marker_style", "o")
+                linestyle = '-'  # Default line style
+                
+                # Get font properties or use defaults
+                axis_font = data.get("axis_font", {'family': 'sans-serif', 'size': 11})
+                title_font = data.get("title_font", {'family': 'sans-serif', 'size': 12, 'weight': 'bold'})
+                
+                # Plot with the specified style
+                if marker.lower() == "none":
+                    ax.plot(x_vals, y_vals, 
+                           color=color, 
+                           linestyle=linestyle,
+                           label=data.get("name", "Unnamed Graph"))
+                else:
+                    ax.plot(x_vals, y_vals, 
+                           color=color, 
+                           marker=marker,
+                           linestyle=linestyle,
+                           label=data.get("name", "Unnamed Graph"))
             
-            first_data = self.graph_data[0]
-            ax.set_xlabel(first_data.get("x_label", "X Axis"))
-            ax.set_ylabel(first_data.get("y_label", "Y Axis"))
-            ax.set_xlim(first_data.get("x_min", 0), first_data.get("x_max", 10))
-            ax.set_ylim(first_data.get("y_min", 0), first_data.get("y_max", 10))
+            if self.graph_data:
+                first_data = self.graph_data[0]
+                
+                # Set labels with font properties
+                ax.set_xlabel(first_data.get("x_label", "X Axis"), fontdict=axis_font)
+                ax.set_ylabel(first_data.get("y_label", "Y Axis"), fontdict=axis_font)
+                
+                # Set tick labels with the same font properties
+                for label in ax.get_xticklabels():
+                    label.set_fontproperties(axis_font)
+                for label in ax.get_yticklabels():
+                    label.set_fontproperties(axis_font)
+                
+                ax.set_xlim(first_data.get("x_min", 0), first_data.get("x_max", 10))
+                ax.set_ylim(first_data.get("y_min", 0), first_data.get("y_max", 10))
+                
+                # Set title if available
+                if "name" in first_data:
+                    ax.set_title(first_data["name"], fontdict=title_font, pad=20)
             
             ax.grid(True)
-            ax.legend(loc='upper right')
+            
+            # Add legend with consistent font
+            if self.graph_data:
+                axis_font = self.graph_data[0].get("axis_font", {'family': 'sans-serif', 'size': 11})
+                ax.legend(loc='upper right', 
+                         bbox_to_anchor=(1, 1),
+                         framealpha=1,
+                         edgecolor='black',
+                         prop={'family': axis_font['family'], 
+                               'size': axis_font['size']})
+            
+            # Adjust layout to prevent clipping
+            fig.tight_layout()
             
             fig.savefig(file_name, bbox_inches='tight')
             QMessageBox.information(self, "Success", f"Combined graph exported to {file_name}")
