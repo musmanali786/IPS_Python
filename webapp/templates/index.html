@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Graph Digitizer</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        #sidebar {
+            min-width: 250px;
+            max-width: 250px;
+            height: 100vh;
+            position: fixed;
+            background: #f8f9fa;
+            border-right: 1px solid #dee2e6;
+        }
+        #content {
+            margin-left: 250px;
+            padding: 20px;
+        }
+        #graph-container {
+            position: relative;
+            border: 1px solid #ddd;
+            margin-bottom: 20px;
+        }
+        #graph-image {
+            max-width: 100%;
+            display: block;
+        }
+        .point-marker {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background-color: red;
+            border-radius: 50%;
+            transform: translate(-5px, -5px);
+        }
+        #points-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="d-flex">
+        <!-- Sidebar -->
+        <div id="sidebar" class="p-3">
+            <h4>Graph Digitizer</h4>
+            <hr>
+            
+            <!-- Upload Section -->
+            <div class="mb-4">
+                <h5>Upload Graph</h5>
+                <form id="upload-form" enctype="multipart/form-data">
+                    <div class="mb-3">
+                        <input class="form-control" type="file" id="graph-file" name="file" accept="image/*">
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Upload</button>
+                </form>
+            </div>
+            
+            <!-- Settings Section -->
+            <div class="mb-4">
+                <h5>Graph Settings</h5>
+                <form id="settings-form">
+                    <div class="mb-3">
+                        <label for="x-label" class="form-label">X Axis Label</label>
+                        <input type="text" class="form-control" id="x-label" value="{{ state.x_label }}">
+                    </div>
+                    <div class="mb-3">
+                        <label for="y-label" class="form-label">Y Axis Label</label>
+                        <input type="text" class="form-control" id="y-label" value="{{ state.y_label }}">
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col">
+                            <label for="x-min" class="form-label">X Min</label>
+                            <input type="number" class="form-control" id="x-min" step="any" value="{{ state.x_min }}">
+                        </div>
+                        <div class="col">
+                            <label for="x-max" class="form-label">X Max</label>
+                            <input type="number" class="form-control" id="x-max" step="any" value="{{ state.x_max }}">
+                        </div>
+                    </div>
+                    <div class="row mb-3">
+                        <div class="col">
+                            <label for="y-min" class="form-label">Y Min</label>
+                            <input type="number" class="form-control" id="y-min" step="any" value="{{ state.y_min }}">
+                        </div>
+                        <div class="col">
+                            <label for="y-max" class="form-label">Y Max</label>
+                            <input type="number" class="form-control" id="y-max" step="any" value="{{ state.y_max }}">
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100">Update Settings</button>
+                </form>
+            </div>
+            
+            <!-- Actions Section -->
+            <div class="mb-4">
+                <h5>Actions</h5>
+                <button id="clear-btn" class="btn btn-danger w-100 mb-2">Clear Points</button>
+                <button id="export-btn" class="btn btn-success w-100">Export PDF</button>
+            </div>
+        </div>
+        
+        <!-- Main Content -->
+        <div id="content" class="flex-grow-1">
+            <h2>Graph Digitizer</h2>
+            
+            <!-- Graph Display -->
+            <div id="graph-container">
+                {% if state.image_path %}
+                    <img id="graph-image" src="{{ url_for('static', filename='uploads/' + state.image_path.split('/')[-1]) }}" alt="Graph">
+                {% else %}
+                    <div class="d-flex justify-content-center align-items-center" style="height: 400px; background: #eee;">
+                        <p class="text-muted">Upload a graph image to begin</p>
+                    </div>
+                {% endif %}
+            </div>
+            
+            <!-- Points List -->
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">Selected Points</h5>
+                </div>
+                <div class="card-body">
+                    <ul id="points-list" class="list-group">
+                        {% for point in state.points %}
+                            <li class="list-group-item">Point {{ loop.index }}: ({{ "%.2f"|format(point[0]) }}, {{ "%.2f"|format(point[1]) }})</li>
+                        {% endfor %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Handle file upload
+        document.getElementById('upload-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const formData = new FormData();
+            formData.append('file', document.getElementById('graph-file').files[0]);
+            
+            try {
+                const response = await fetch('/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                if (response.ok) {
+                    window.location.reload();
+                } else {
+                    alert('Error uploading file');
+                }
+            } catch (error) {
+                alert('Error uploading file: ' + error.message);
+            }
+        });
+        
+        // Handle graph clicks
+        const graphContainer = document.getElementById('graph-container');
+        const graphImage = document.getElementById('graph-image');
+        
+        if (graphImage) {
+            graphContainer.addEventListener('click', async (e) => {
+                const rect = graphImage.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                // Only proceed if click is within the image
+                if (x >= 0 && x <= rect.width && y >= 0 && y <= rect.height) {
+                    const formData = new FormData();
+                    formData.append('x', (x / rect.width * graphImage.naturalWidth).toString());
+                    formData.append('y', (y / rect.height * graphImage.naturalHeight).toString());
+                    
+                    try {
+                        const response = await fetch('/add_point', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        
+                        const data = await response.json();
+                        
+                        if (data.status === 'success') {
+                            // Add point marker
+                            const marker = document.createElement('div');
+                            marker.className = 'point-marker';
+                            marker.style.left = `${x}px`;
+                            marker.style.top = `${y}px`;
+                            graphContainer.appendChild(marker);
+                            
+                            // Update points list
+                            const pointsList = document.getElementById('points-list');
+                            pointsList.innerHTML = '';
+                            
+                            data.points.forEach((point, i) => {
+                                const li = document.createElement('li');
+                                li.className = 'list-group-item';
+                                li.textContent = `Point ${i+1}: (${point[0].toFixed(2)}, ${point[1].toFixed(2)})`;
+                                pointsList.appendChild(li);
+                            });
+                        } else {
+                            alert('Error adding point: ' + data.message);
+                        }
+                    } catch (error) {
+                        alert('Error adding point: ' + error.message);
+                    }
+                }
+            });
+        }
+        
+        // Handle settings update
+        document.getElementById('settings-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const formData = new FormData();
+            formData.append('x_label', document.getElementById('x-label').value);
+            formData.append('y_label', document.getElementById('y-label').value);
+            formData.append('x_min', document.getElementById('x-min').value);
+            formData.append('x_max', document.getElementById('x-max').value);
+            formData.append('y_min', document.getElementById('y-min').value);
+            formData.append('y_max', document.getElementById('y-max').value);
+            
+            try {
+                const response = await fetch('/update_settings', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    alert('Settings updated successfully');
+                } else {
+                    alert('Error updating settings: ' + data.message);
+                }
+            } catch (error) {
+                alert('Error updating settings: ' + error.message);
+            }
+        });
+        
+        // Handle clear points
+        document.getElementById('clear-btn').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/clear_points', {
+                    method: 'POST'
+                });
+                
+                const data = await response.json();
+                
+                if (data.status === 'success') {
+                    // Remove all point markers
+                    document.querySelectorAll('.point-marker').forEach(marker => {
+                        marker.remove();
+                    });
+                    
+                    // Clear points list
+                    document.getElementById('points-list').innerHTML = '';
+                } else {
+                    alert('Error clearing points: ' + data.message);
+                }
+            } catch (error) {
+                alert('Error clearing points: ' + error.message);
+            }
+        });
+        
+        // Handle export PDF
+        document.getElementById('export-btn').addEventListener('click', () => {
+            window.location.href = '/export_pdf';
+        });
+    </script>
+</body>
+</html>
