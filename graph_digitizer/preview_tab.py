@@ -1,9 +1,12 @@
 import json
 from PyQt5.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                            QFileDialog, QListWidget, QMessageBox, QInputDialog)
+                            QFileDialog, QListWidget, QMessageBox, QInputDialog,
+                            QDialog, QFormLayout, QLineEdit, QDoubleSpinBox,
+                            QComboBox, QColorDialog, QDialogButtonBox)
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from PyQt5.QtCore import Qt
+from PyQt5.QtGui import QColor
 
 class PreviewTab(QWidget):
     def __init__(self, parent=None):
@@ -31,9 +34,9 @@ class PreviewTab(QWidget):
         self.clear_btn.clicked.connect(self.clear_all)
         self.controls.addWidget(self.clear_btn)
         
-        self.rename_btn = QPushButton("Rename Graph")
-        self.rename_btn.clicked.connect(self.rename_graph)
-        self.controls.addWidget(self.rename_btn)
+        self.properties_btn = QPushButton("Change Graph Properties")
+        self.properties_btn.clicked.connect(self.change_graph_properties)
+        self.controls.addWidget(self.properties_btn)
         
         self.export_btn = QPushButton("Export Combined PDF")
         self.export_btn.clicked.connect(self.export_combined_pdf)
@@ -44,7 +47,7 @@ class PreviewTab(QWidget):
         # Loaded graphs list
         self.graphs_list = QListWidget()
         self.graphs_list.setSelectionMode(QListWidget.SingleSelection)
-        self.graphs_list.itemDoubleClicked.connect(self.rename_graph)
+        self.graphs_list.itemDoubleClicked.connect(self.change_graph_properties)
         self.layout.addWidget(self.graphs_list)
     
     def load_json(self):
@@ -66,26 +69,103 @@ class PreviewTab(QWidget):
         
         self.update_preview()
     
-    def rename_graph(self):
+    def change_graph_properties(self):
         selected_items = self.graphs_list.selectedItems()
         if not selected_items:
-            QMessageBox.warning(self, "Warning", "Please select a graph to rename.")
+            QMessageBox.warning(self, "Warning", "Please select a graph to modify.")
             return
             
         selected_item = selected_items[0]
-        current_name = selected_item.text()
         row = self.graphs_list.row(selected_item)
+        data = self.graph_data[row]
         
-        new_name, ok = QInputDialog.getText(
-            self, "Rename Graph", 
-            "Enter new graph name:", 
-            text=current_name
-        )
+        # Create properties dialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Graph Properties")
+        layout = QVBoxLayout()
         
-        if ok and new_name:
-            selected_item.setText(new_name)
-            self.graph_data[row]["name"] = new_name
+        # Form for properties
+        form = QFormLayout()
+        
+        # Graph name
+        name_input = QLineEdit(data.get("name", "Unnamed Graph"))
+        form.addRow("Graph Name:", name_input)
+        
+        # X-axis properties
+        x_label_input = QLineEdit(data.get("x_label", "X Axis"))
+        x_min_input = QDoubleSpinBox()
+        x_min_input.setRange(-1e9, 1e9)
+        x_min_input.setValue(data.get("x_min", 0))
+        x_max_input = QDoubleSpinBox()
+        x_max_input.setRange(-1e9, 1e9)
+        x_max_input.setValue(data.get("x_max", 10))
+        
+        form.addRow("X Axis Label:", x_label_input)
+        form.addRow("X Min:", x_min_input)
+        form.addRow("X Max:", x_max_input)
+        
+        # Y-axis properties
+        y_label_input = QLineEdit(data.get("y_label", "Y Axis"))
+        y_min_input = QDoubleSpinBox()
+        y_min_input.setRange(-1e9, 1e9)
+        y_min_input.setValue(data.get("y_min", 0))
+        y_max_input = QDoubleSpinBox()
+        y_max_input.setRange(-1e9, 1e9)
+        y_max_input.setValue(data.get("y_max", 10))
+        
+        form.addRow("Y Axis Label:", y_label_input)
+        form.addRow("Y Min:", y_min_input)
+        form.addRow("Y Max:", y_max_input)
+        
+        # Line properties
+        color_btn = QPushButton("Line Color")
+        current_color = data.get("line_color", data.get("color", "#1f77b4"))
+        color_btn.setStyleSheet(f"background-color: {current_color}; color: white;")
+        color_btn.clicked.connect(lambda: self.choose_color(color_btn))
+        
+        marker_style_combo = QComboBox()
+        marker_style_combo.addItems(["None", "Circle (o)", "Square (s)", "Triangle (^)", 
+                                   "Diamond (D)", "Plus (+)", "Cross (x)"])
+        current_marker = data.get("marker_style", "o")
+        marker_map = {"None": 0, "o": 1, "s": 2, "^": 3, "D": 4, "+": 5, "x": 6}
+        marker_style_combo.setCurrentIndex(marker_map.get(current_marker, 1))
+        
+        form.addRow("Line Color:", color_btn)
+        form.addRow("Marker Style:", marker_style_combo)
+        self.line_color = current_color
+        
+        layout.addLayout(form)
+        
+        # Dialog buttons
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+        
+        dialog.setLayout(layout)
+        
+        if dialog.exec_() == QDialog.Accepted:
+            # Update graph data with new properties
+            data["name"] = name_input.text()
+            data["x_label"] = x_label_input.text()
+            data["y_label"] = y_label_input.text()
+            data["x_min"] = x_min_input.value()
+            data["x_max"] = x_max_input.value()
+            data["y_min"] = y_min_input.value()
+            data["y_max"] = y_max_input.value()
+            data["line_color"] = self.line_color
+            data["marker_style"] = ["None", "o", "s", "^", "D", "+", "x"][marker_style_combo.currentIndex()]
+            
+            # Update list item
+            selected_item.setText(data["name"])
             self.update_preview()
+    
+    def choose_color(self, button):
+        color = QColorDialog.getColor(QColor(button.palette().button().color()), self)
+        if color.isValid():
+            button.setStyleSheet(f"background-color: {color.name()}; color: white;")
+            #button.property("color", color.name())
+            self.line_color = color.name()
     
     def clear_all(self):
         self.graph_data = []
@@ -221,16 +301,16 @@ class PreviewTab(QWidget):
                 ax.set_ylim(first_data.get("y_min", 0), first_data.get("y_max", 10))
                 
                 # Set title if available
-                if "name" in first_data:
-                    ax.set_title(first_data["name"], fontdict=title_font, pad=20)
+                #if "name" in first_data:
+                #    ax.set_title(first_data["name"], fontdict=title_font, pad=20)
             
             ax.grid(True)
             
             # Add legend with consistent font
             if self.graph_data:
                 axis_font = self.graph_data[0].get("axis_font", {'family': 'sans-serif', 'size': 11})
-                ax.legend(loc='upper right', 
-                         bbox_to_anchor=(1, 1),
+                ax.legend(loc='lower right', 
+                         bbox_to_anchor=(1, 0),
                          framealpha=1,
                          edgecolor='black',
                          prop={'family': axis_font['family'], 
