@@ -124,7 +124,15 @@ class PreviewTab(QWidget):
                        marker=marker,
                        linestyle=linestyle,
                        label=data.get("name", "Unnamed Graph"))
-        
+        I want to design a utility application for my Indoor positioning system class where they can login in and add their dataset and map image and  perform different experiments
+1. trilitration
+2. finger printing 
+3. pdr
+4. ble 
+5. ftm 
+6. device free positioning
+
+give me feature set of this application 
         if self.graph_data:
             first_data = self.graph_data[0]
             

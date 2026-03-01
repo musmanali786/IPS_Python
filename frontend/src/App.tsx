@@ -8,16 +8,22 @@ import {
   BarChart3,
   Moon,
   Sun,
+  Hammer,
+  Radio,
 } from 'lucide-react';
 import Dashboard from './pages/Dashboard';
 import MapSetup from './pages/MapSetup';
 import DatasetManager from './pages/DatasetManager';
 import ExperimentLab from './pages/ExperimentLab';
 import ResultsGallery from './pages/ResultsGallery';
+import MapBuilder from './pages/MapBuilder';
+import SignalAnalyzer from './pages/SignalAnalyzer';
 
 const navItems = [
   { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { to: '/map-builder', label: 'Map Builder', icon: Hammer },
   { to: '/map-setup', label: 'Map Setup', icon: Map },
+  { to: '/signal', label: 'Signal Analyzer', icon: Radio },
   { to: '/datasets', label: 'Datasets', icon: Database },
   { to: '/lab', label: 'Experiment Lab', icon: FlaskConical },
   { to: '/results', label: 'Results', icon: BarChart3 },
@@ -78,7 +84,9 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/map-builder" element={<MapBuilder />} />
             <Route path="/map-setup" element={<MapSetup />} />
+            <Route path="/signal" element={<SignalAnalyzer />} />
             <Route path="/datasets" element={<DatasetManager />} />
             <Route path="/lab" element={<ExperimentLab />} />
             <Route path="/results" element={<ResultsGallery />} />
