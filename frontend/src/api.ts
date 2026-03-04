@@ -120,9 +120,136 @@ export interface PositionResponse {
   distances?: number[];
 }
 
+// ─── Trilateration Lab (file-based) ─────────────────────────────
+
+export interface LabAPInfo {
+  ssid: string;
+  x: number;
+  y: number;
+  bssid: string;
+}
+
+export interface LabRefPoint {
+  id: number;
+  x: number;
+  y: number;
+  filetag: string;
+}
+
+export interface LabRefResult {
+  ref_id: number;
+  ref_x: number;
+  ref_y: number;
+  filetag: string;
+  distances: number[];
+  estimated_x: number | null;
+  estimated_y: number | null;
+  error: number | null;
+}
+
+export interface LabTrilaterationResponse {
+  access_points: LabAPInfo[];
+  ref_points: LabRefPoint[];
+  results: LabRefResult[];
+  room_width: number;
+  room_height: number;
+  rssi0: number;
+  path_loss_exponent: number;
+  solver: string;
+}
+
+// ─── Fingerprinting Lab (file-based) ────────────────────────────
+
+export interface LabFPRefPoint {
+  id: string;
+  x: number;
+  y: number;
+  filetag: string;
+  num_bssids: number;
+}
+
+export interface LabFPTestResult {
+  test_id: string;
+  test_x: number;
+  test_y: number;
+  filetag: string;
+  estimated_x: number | null;
+  estimated_y: number | null;
+  error_px: number | null;
+  error_m: number | null;
+  matched_ref: string | null;
+  rssi_error: number | null;
+}
+
+export interface LabFingerprintingResponse {
+  ref_points: LabFPRefPoint[];
+  test_results: LabFPTestResult[];
+  fp_db_size: number;
+  total_unique_bssids: number;
+  algorithm: string;
+  k: number;
+  max_aps: number;
+  pixels_per_meter: number;
+  scan_mode: string;
+  errors_m: number[];
+  cdf: { x: number[]; y: number[] };
+  statistics: Record<string, number>;
+}
+
 export const experimentsApi = {
   trilateration: (data: TrilaterationRequest) =>
     api.post<PositionResponse>('/experiments/trilateration', data),
+  trilaterationLab: (data: {
+    apsCsv: File;
+    refPtsCsv: File;
+    logFiles: File[];
+    rssi0: number;
+    pathLossExponent: number;
+    solver: string;
+    roomWidth: number;
+    roomHeight: number;
+  }) => {
+    const form = new FormData();
+    form.append('aps_csv', data.apsCsv);
+    form.append('refpts_csv', data.refPtsCsv);
+    data.logFiles.forEach((f) => form.append('log_files', f));
+    form.append('rssi0', data.rssi0.toString());
+    form.append('path_loss_exponent', data.pathLossExponent.toString());
+    form.append('solver', data.solver);
+    form.append('room_width', data.roomWidth.toString());
+    form.append('room_height', data.roomHeight.toString());
+    return api.post<LabTrilaterationResponse>('/experiments/trilateration-lab', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
+  // ─── Fingerprinting Lab (file-based, mirrors Lab02) ─────────
+  fingerprintingLab: (data: {
+    refPtsCsv: File;
+    testPtsCsv: File;
+    trainLogFiles: File[];
+    testLogFiles: File[];
+    k: number;
+    algorithm: string;
+    maxAps: number;
+    pixelsPerMeter: number;
+    scanMode: string;
+  }) => {
+    const form = new FormData();
+    form.append('refpts_csv', data.refPtsCsv);
+    form.append('testpts_csv', data.testPtsCsv);
+    data.trainLogFiles.forEach((f) => form.append('train_log_files', f));
+    data.testLogFiles.forEach((f) => form.append('test_log_files', f));
+    form.append('k', data.k.toString());
+    form.append('algorithm', data.algorithm);
+    form.append('max_aps', data.maxAps.toString());
+    form.append('pixels_per_meter', data.pixelsPerMeter.toString());
+    form.append('scan_mode', data.scanMode);
+    return api.post<LabFingerprintingResponse>('/experiments/fingerprinting-lab', form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    });
+  },
+
   fingerprint: (data: any) => api.post<PositionResponse>('/experiments/fingerprint', data),
   pdr: (data: any) => api.post('/experiments/pdr', data),
   bleSmooth: (data: any) => api.post('/experiments/ble/smooth', data),

@@ -1,12 +1,23 @@
 """Experiment engine endpoints – Trilateration, Fingerprinting, PDR, BLE, FTM, DFP."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, UploadFile, File as FastFile, Form
 from pydantic import BaseModel, Field
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 import numpy as np
+import csv
+import io
+import tempfile
+import os
 
 from services.trilateration import rssi_to_distance, trilaterate_ls, trilaterate_wls
-from services.fingerprinting import knn_match, weighted_knn_match
+from services.fingerprinting import (
+    knn_match,
+    weighted_knn_match,
+    nearest_match_rssi_dict,
+    knn_match_rssi_dict,
+    average_wifi_scans,
+)
+import math
 from services.pdr import (
     detect_steps,
     weinberg_stride_length,
@@ -59,7 +70,392 @@ def run_trilateration(req: TrilaterationRequest):
     return PositionResponse(x=x, y=y, distances=distances)
 
 
-# ─── Fingerprinting ──────────────────────────────────────────────
+# ─── Trilateration Lab (file-based, mirrors Lab01/Main.py) ───────
+
+def _parse_wifi_scan(content: str) -> Dict[str, int]:
+    """Parse a GetSensorData logfile and return {bssid: rssi} from the first WIFI scan."""
+    list_scans = []
+    reader = csv.reader(io.StringIO(content), delimiter=';')
+    prv_tag = "NONE"
+    bssid_rssi: Dict[str, int] = {}
+    for row in reader:
+        if len(row) > 4:
+            if row[0] == "WIFI":
+                bssid = row[4]
+                rssi = int(row[5])
+                bssid_rssi[bssid] = rssi
+            elif prv_tag == "WIFI" and row[0] != "WIFI":
+                list_scans.append(dict(bssid_rssi))
+                bssid_rssi = {}
+                break
+            prv_tag = row[0]
+    if not list_scans:
+        if bssid_rssi:
+            list_scans.append(dict(bssid_rssi))
+        else:
+            raise HTTPException(400, "No WIFI scan found in log file")
+    return list_scans[0]
+
+
+class LabTrilaterationRefResult(BaseModel):
+    ref_id: int
+    ref_x: float
+    ref_y: float
+    filetag: str
+    distances: List[float]
+    estimated_x: Optional[float] = None
+    estimated_y: Optional[float] = None
+    error: Optional[float] = None
+
+
+class LabTrilaterationResponse(BaseModel):
+    access_points: List[dict]        # [{ssid, x, y, bssid}, ...]
+    ref_points: List[dict]           # [{id, x, y, filetag}, ...]
+    results: List[LabTrilaterationRefResult]
+    room_width: float
+    room_height: float
+    rssi0: float
+    path_loss_exponent: float
+    solver: str
+
+
+@router.post("/trilateration-lab", response_model=LabTrilaterationResponse)
+async def run_trilateration_lab(
+    aps_csv: UploadFile = FastFile(..., description="APs CSV: ssid,x,y,bssid"),
+    refpts_csv: UploadFile = FastFile(..., description="RefPts CSV: id,x,y,filetag"),
+    log_files: List[UploadFile] = FastFile(..., description="Dataset log files (one per ref point)"),
+    rssi0: float = Form(-32.0),
+    path_loss_exponent: float = Form(2.45),
+    solver: str = Form("ls"),
+    room_width: float = Form(13.0),
+    room_height: float = Form(13.0),
+):
+    # ── Parse APs CSV ─────────────────────────────────────────────
+    aps_content = (await aps_csv.read()).decode('utf-8')
+    ap_infos = []
+    for row in csv.reader(io.StringIO(aps_content)):
+        if not row or row[0].startswith('#'):
+            continue
+        ssid, x, y, bssid = row[0].strip(), float(row[1]), float(row[2]), row[3].strip()
+        ap_infos.append({"ssid": ssid, "x": x, "y": y, "bssid": bssid})
+
+    if len(ap_infos) < 3:
+        raise HTTPException(400, "Need at least 3 APs in the CSV")
+
+    # ── Parse Ref Points CSV ──────────────────────────────────────
+    ref_content = (await refpts_csv.read()).decode('utf-8')
+    ref_ptsinfo = []
+    for row in csv.reader(io.StringIO(ref_content)):
+        if not row or row[0].startswith('#'):
+            continue
+        refno, x, y, filetag = int(row[0]), float(row[1]), float(row[2]), row[3].strip()
+        ref_ptsinfo.append({"id": refno, "x": x, "y": y, "filetag": filetag})
+
+    # ── Index log files by filetag ────────────────────────────────
+    log_contents: Dict[str, str] = {}
+    for lf in log_files:
+        fname = lf.filename or ""
+        content = (await lf.read()).decode('utf-8', errors='replace')
+        # Index by full filename and also by matching ref tags
+        log_contents[fname] = content
+
+    # ── Process each reference point ──────────────────────────────
+    results: List[LabTrilaterationRefResult] = []
+    for ref in ref_ptsinfo:
+        # Find matching log file by filetag in filename
+        filetag = ref["filetag"]
+        matched_content = None
+        for fname, content in log_contents.items():
+            if filetag in fname:
+                matched_content = content
+                break
+
+        if matched_content is None:
+            raise HTTPException(400, f"No log file found matching filetag '{filetag}'. "
+                                     f"Uploaded files: {[lf.filename for lf in log_files]}")
+
+        bssid_rssi = _parse_wifi_scan(matched_content)
+
+        # Compute distances from each AP
+        distances = []
+        for ap in ap_infos:
+            bssid = ap["bssid"]
+            if bssid not in bssid_rssi:
+                raise HTTPException(400, f"BSSID {bssid} (AP {ap['ssid']}) not found in log for {filetag}")
+            rssi = bssid_rssi[bssid]
+            rssi_diff = rssi0 - rssi
+            d = 10 ** (rssi_diff / (10 * path_loss_exponent))
+            distances.append(round(d, 3))
+
+        # Trilaterate
+        anchors = [(ap["x"], ap["y"]) for ap in ap_infos]
+        try:
+            if solver == "wls":
+                est_x, est_y = trilaterate_wls(anchors, distances)
+            else:
+                est_x, est_y = trilaterate_ls(anchors, distances)
+            error = float(np.sqrt((est_x - ref["x"])**2 + (est_y - ref["y"])**2))
+        except Exception:
+            est_x, est_y, error = None, None, None
+
+        results.append(LabTrilaterationRefResult(
+            ref_id=ref["id"],
+            ref_x=ref["x"],
+            ref_y=ref["y"],
+            filetag=filetag,
+            distances=distances,
+            estimated_x=round(est_x, 3) if est_x is not None else None,
+            estimated_y=round(est_y, 3) if est_y is not None else None,
+            error=round(error, 3) if error is not None else None,
+        ))
+
+    return LabTrilaterationResponse(
+        access_points=ap_infos,
+        ref_points=[{"id": r["id"], "x": r["x"], "y": r["y"], "filetag": r["filetag"]} for r in ref_ptsinfo],
+        results=results,
+        room_width=room_width,
+        room_height=room_height,
+        rssi0=rssi0,
+        path_loss_exponent=path_loss_exponent,
+        solver=solver,
+    )
+
+
+# ─── Fingerprinting Lab (file-based, mirrors Lab02) ──────────────
+
+def _parse_all_wifi_scans(content: str) -> List[Dict[str, int]]:
+    """Parse ALL WiFi scan blocks from a GetSensorData log file."""
+    scans: List[Dict[str, int]] = []
+    reader = csv.reader(io.StringIO(content), delimiter=';')
+    prv_tag = "NONE"
+    bssid_rssi: Dict[str, int] = {}
+    for row in reader:
+        if len(row) > 4:
+            if row[0] == "WIFI":
+                bssid_rssi[row[4]] = int(row[5])
+            elif prv_tag == "WIFI" and row[0] != "WIFI":
+                if bssid_rssi:
+                    scans.append(dict(bssid_rssi))
+                    bssid_rssi = {}
+            prv_tag = row[0]
+    if bssid_rssi:
+        scans.append(dict(bssid_rssi))
+    return scans
+
+
+class LabFPTestResult(BaseModel):
+    test_id: str
+    test_x: float
+    test_y: float
+    filetag: str
+    estimated_x: Optional[float] = None
+    estimated_y: Optional[float] = None
+    error_px: Optional[float] = None
+    error_m: Optional[float] = None
+    matched_ref: Optional[str] = None
+    rssi_error: Optional[float] = None
+
+
+class LabFPRefPoint(BaseModel):
+    id: str
+    x: float
+    y: float
+    filetag: str
+    num_bssids: int
+
+
+class LabFingerprintingResponse(BaseModel):
+    ref_points: List[LabFPRefPoint]
+    test_results: List[LabFPTestResult]
+    fp_db_size: int
+    total_unique_bssids: int
+    algorithm: str
+    k: int
+    max_aps: int
+    pixels_per_meter: float
+    scan_mode: str
+    errors_m: List[float]
+    cdf: dict
+    statistics: dict
+
+
+@router.post("/fingerprinting-lab", response_model=LabFingerprintingResponse)
+async def run_fingerprinting_lab(
+    refpts_csv: UploadFile = FastFile(..., description="Ref Points CSV: ID,X,Y,File"),
+    testpts_csv: UploadFile = FastFile(..., description="Test Points CSV: ID,X,Y,File"),
+    train_log_files: List[UploadFile] = FastFile(..., description="Training log files"),
+    test_log_files: List[UploadFile] = FastFile(..., description="Test log files"),
+    k: int = Form(1),
+    algorithm: str = Form("nearest"),
+    max_aps: int = Form(0),
+    pixels_per_meter: float = Form(20.0),
+    scan_mode: str = Form("average"),
+):
+    # ── Parse Reference Points CSV ────────────────────────────────
+    ref_content = (await refpts_csv.read()).decode("utf-8")
+    ref_infos: List[dict] = []
+    for row in csv.reader(io.StringIO(ref_content)):
+        if not row or row[0].strip().upper() == "ID" or row[0].startswith("#"):
+            continue
+        ref_infos.append({
+            "id": row[0].strip(),
+            "x": float(row[1]),
+            "y": float(row[2]),
+            "filetag": row[3].strip(),
+        })
+
+    # ── Index training log files ──────────────────────────────────
+    train_contents: Dict[str, str] = {}
+    for lf in train_log_files:
+        content = (await lf.read()).decode("utf-8", errors="replace")
+        train_contents[lf.filename or ""] = content
+
+    # ── Build Fingerprint Database ────────────────────────────────
+    fp_db: Dict[str, Dict[str, float]] = {}
+    fp_coords: Dict[str, Tuple[float, float]] = {}
+    ref_point_models: List[LabFPRefPoint] = []
+
+    for ref in ref_infos:
+        filetag = ref["filetag"]
+        matched_content = None
+        for fname, content in train_contents.items():
+            if filetag in fname:
+                matched_content = content
+                break
+        if matched_content is None:
+            raise HTTPException(
+                400,
+                f"No training log file matching filetag '{filetag}'. "
+                f"Uploaded: {list(train_contents.keys())}",
+            )
+
+        all_scans = _parse_all_wifi_scans(matched_content)
+        if not all_scans:
+            raise HTTPException(400, f"No WiFi scans in training file for '{filetag}'")
+
+        if scan_mode == "first":
+            fingerprint = {b: float(r) for b, r in all_scans[0].items()}
+        else:
+            fingerprint = average_wifi_scans(all_scans)
+
+        rid = ref["id"]
+        fp_db[rid] = fingerprint
+        fp_coords[rid] = (ref["x"], ref["y"])
+        ref_point_models.append(LabFPRefPoint(
+            id=rid, x=ref["x"], y=ref["y"],
+            filetag=filetag, num_bssids=len(fingerprint),
+        ))
+
+    # ── Parse Test Points CSV ─────────────────────────────────────
+    test_content = (await testpts_csv.read()).decode("utf-8")
+    test_infos: List[dict] = []
+    for row in csv.reader(io.StringIO(test_content)):
+        if not row or row[0].strip().upper() == "ID" or row[0].startswith("#"):
+            continue
+        test_infos.append({
+            "id": row[0].strip(),
+            "x": float(row[1]),
+            "y": float(row[2]),
+            "filetag": row[3].strip(),
+        })
+
+    # ── Index test log files ──────────────────────────────────────
+    test_contents: Dict[str, str] = {}
+    for lf in test_log_files:
+        content = (await lf.read()).decode("utf-8", errors="replace")
+        test_contents[lf.filename or ""] = content
+
+    # ── Match each test point ─────────────────────────────────────
+    all_unique_bssids: set = set()
+    for fp in fp_db.values():
+        all_unique_bssids.update(fp.keys())
+
+    test_results: List[LabFPTestResult] = []
+    errors_m: List[float] = []
+
+    for tp in test_infos:
+        filetag = tp["filetag"]
+        matched_content = None
+        for fname, content in test_contents.items():
+            if filetag in fname:
+                matched_content = content
+                break
+        if matched_content is None:
+            raise HTTPException(
+                400,
+                f"No test log file matching filetag '{filetag}'. "
+                f"Uploaded: {list(test_contents.keys())}",
+            )
+
+        all_scans = _parse_all_wifi_scans(matched_content)
+        if not all_scans:
+            raise HTTPException(400, f"No WiFi scans in test file for '{filetag}'")
+
+        if scan_mode == "first":
+            online_scan: Dict[str, float] = {b: float(r) for b, r in all_scans[0].items()}
+        else:
+            online_scan = average_wifi_scans(all_scans)
+
+        # Run matching
+        if algorithm == "nearest":
+            matched_id, est_x, est_y, rssi_err = nearest_match_rssi_dict(
+                fp_db, fp_coords, online_scan, max_aps,
+            )
+        elif algorithm == "wknn":
+            matched_id, est_x, est_y, rssi_err = knn_match_rssi_dict(
+                fp_db, fp_coords, online_scan, k, max_aps, weighted=True,
+            )
+        else:  # knn
+            matched_id, est_x, est_y, rssi_err = knn_match_rssi_dict(
+                fp_db, fp_coords, online_scan, k, max_aps, weighted=False,
+            )
+
+        if matched_id is not None:
+            err_px = math.sqrt((est_x - tp["x"]) ** 2 + (est_y - tp["y"]) ** 2)
+            err_m = err_px / pixels_per_meter if pixels_per_meter > 0 else err_px
+            errors_m.append(err_m)
+        else:
+            est_x, est_y, err_px, err_m, rssi_err = None, None, None, None, None
+
+        test_results.append(LabFPTestResult(
+            test_id=tp["id"],
+            test_x=tp["x"],
+            test_y=tp["y"],
+            filetag=filetag,
+            estimated_x=round(est_x, 2) if est_x is not None else None,
+            estimated_y=round(est_y, 2) if est_y is not None else None,
+            error_px=round(err_px, 2) if err_px is not None else None,
+            error_m=round(err_m, 3) if err_m is not None else None,
+            matched_ref=matched_id,
+            rssi_error=round(rssi_err, 2) if rssi_err is not None else None,
+        ))
+
+    # ── CDF & statistics ──────────────────────────────────────────
+    if errors_m:
+        err_arr = np.array(errors_m)
+        cdf = compute_cdf(err_arr)
+        stats = error_statistics(err_arr)
+    else:
+        cdf = {"x": [], "y": []}
+        stats = {}
+
+    return LabFingerprintingResponse(
+        ref_points=ref_point_models,
+        test_results=test_results,
+        fp_db_size=len(fp_db),
+        total_unique_bssids=len(all_unique_bssids),
+        algorithm=algorithm,
+        k=k,
+        max_aps=max_aps,
+        pixels_per_meter=pixels_per_meter,
+        scan_mode=scan_mode,
+        errors_m=errors_m,
+        cdf=cdf,
+        statistics=stats,
+    )
+
+
+# ─── Fingerprinting (JSON) ───────────────────────────────────────
 
 class FingerprintRequest(BaseModel):
     radio_map: List[List[float]]       # M rows × N APs
