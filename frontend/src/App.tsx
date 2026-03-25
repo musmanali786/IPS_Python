@@ -14,7 +14,7 @@ import {
 import Dashboard from './pages/Dashboard';
 import MapSetup from './pages/MapSetup';
 import DatasetManager from './pages/DatasetManager';
-import ExperimentLab from './pages/ExperimentLab';
+import ExperimentLab, { TrilaterationPanel, FingerprintPanel, PlaceholderPanel } from './pages/ExperimentLab';
 import ResultsGallery from './pages/ResultsGallery';
 import MapBuilder from './pages/MapBuilder';
 import SignalAnalyzer from './pages/SignalAnalyzer';
@@ -88,7 +88,15 @@ export default function App() {
             <Route path="/map-setup" element={<MapSetup />} />
             <Route path="/signal" element={<SignalAnalyzer />} />
             <Route path="/datasets" element={<DatasetManager />} />
-            <Route path="/lab" element={<ExperimentLab />} />
+            <Route path="/lab/*" element={<ExperimentLab />}>
+              <Route index element={<Navigate to="trilateration" replace />} />
+              <Route path="trilateration" element={<TrilaterationPanel />} />
+              <Route path="fingerprint" element={<FingerprintPanel />} />
+              <Route path="pdr" element={<PlaceholderPanel name="Pedestrian Dead Reckoning" />} />
+              <Route path="ble" element={<PlaceholderPanel name="BLE Kalman Smoothing" />} />
+              <Route path="ftm" element={<PlaceholderPanel name="FTM Multilateration" />} />
+              <Route path="dfp" element={<PlaceholderPanel name="Device-Free Positioning" />} />
+            </Route>
             <Route path="/results" element={<ResultsGallery />} />
           </Routes>
         </main>

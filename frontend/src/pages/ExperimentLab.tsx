@@ -1,4 +1,5 @@
 import { useState, useRef, useMemo } from 'react';
+import { NavLink, Outlet } from 'react-router-dom';
 import { experimentsApi } from '../api';
 import type { LabTrilaterationResponse, LabFingerprintingResponse } from '../api';
 import { FlaskConical, Upload, FileText, Wifi, MapPin, Play, Eye, Database, Search } from 'lucide-react';
@@ -16,40 +17,33 @@ const TABS: { key: Tab; label: string }[] = [
 ];
 
 export default function ExperimentLab() {
-  const [tab, setTab] = useState<Tab>('trilateration');
-
   return (
     <div className="flex h-full">
-      {/* Tabs */}
+      {/* Subpage navigation */}
       <div
         className="w-52 shrink-0 p-3 space-y-1 overflow-y-auto"
         style={{ background: 'var(--bg-primary)', borderRight: '1px solid var(--border)' }}
       >
         <p className="text-xs font-semibold uppercase tracking-wider px-3 py-2" style={{ color: 'var(--text-secondary)' }}>
-          Modules
+          Experiment Modules
         </p>
         {TABS.map(({ key, label }) => (
-          <button
+          <NavLink
             key={key}
-            onClick={() => setTab(key)}
-            className={`w-full text-left px-3 py-2 rounded-lg text-sm transition-colors ${
-              tab === key ? 'bg-blue-600 text-white' : 'hover:bg-slate-100'
-            }`}
-            style={tab !== key ? { color: 'var(--text-primary)' } : {}}
+            to={`/lab/${key}`}
+            className={({ isActive }) =>
+              `w-full block text-left px-3 py-2 rounded-lg text-sm transition-colors ${
+                isActive ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-700 hover:text-white'
+              }`
+            }
           >
             {label}
-          </button>
+          </NavLink>
         ))}
       </div>
 
-      {/* Content */}
       <div className="flex-1 p-8 overflow-y-auto">
-        {tab === 'trilateration' && <TrilaterationPanel />}
-        {tab === 'fingerprint' && <FingerprintPanel />}
-        {tab === 'pdr' && <PlaceholderPanel name="Pedestrian Dead Reckoning" />}
-        {tab === 'ble' && <PlaceholderPanel name="BLE Kalman Smoothing" />}
-        {tab === 'ftm' && <PlaceholderPanel name="FTM Multilateration" />}
-        {tab === 'dfp' && <PlaceholderPanel name="Device-Free Positioning" />}
+        <Outlet />
       </div>
     </div>
   );
@@ -57,15 +51,29 @@ export default function ExperimentLab() {
 
 // ─── Trilateration Panel (Lab01-style file-based) ────────────────
 
+type APInfo = { ssid: string; x: number; y: number; bssid: string };
+type RefPoint = { id: number; x: number; y: number; filetag: string };
+type LogScan = {
+  filetag: string;
+  fileName: string;
+  bssidRssi: Record<string, number>;
+  distances: number[];
+};
+
 const COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
 
-function TrilaterationPanel() {
+export function TrilaterationPanel() {
   // File state
   const [apsCsv, setApsCsv] = useState<File | null>(null);
   const [refPtsCsv, setRefPtsCsv] = useState<File | null>(null);
   const [logFiles, setLogFiles] = useState<File[]>([]);
   const [mapImage, setMapImage] = useState<File | null>(null);
   const [mapUrl, setMapUrl] = useState<string | null>(null);
+  const [apPoints, setApPoints] = useState<APInfo[]>([]);
+  const [refPoints, setRefPoints] = useState<RefPoint[]>([]);
+  const [logScans, setLogScans] = useState<LogScan[]>([]);
+  const [selectedLog, setSelectedLog] = useState<string | null>(null);
+  const [selectedRefId, setSelectedRefId] = useState<number | null>(null);
 
   // Parameters
   const [rssi0, setRssi0] = useState(-32);
@@ -85,6 +93,97 @@ function TrilaterationPanel() {
   const refRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLInputElement>(null);
   const mapRef = useRef<HTMLInputElement>(null);
+
+  const pathLossDistance = (rssi: number, rssi0: number, n: number) => {
+    const diff = rssi0 - rssi;
+    return 10 ** (diff / (10 * n));
+  };
+
+  const parseWifiScan = (content: string): Record<string, number> => {
+    // parse first WIFI scan block of GetSensorData logs
+    const lines = content.split(/\r?\n/);
+    let lastTag = 'NONE';
+    let bssidRssi: Record<string, number> = {};
+    const scans: Record<string, number>[] = [];
+
+    for (const line of lines) {
+      const cells = line.split(';');
+      if (cells.length > 4) {
+        const tag = cells[0];
+        if (tag === 'WIFI') {
+          bssidRssi[cells[4]] = Number(cells[5]);
+        } else if (lastTag === 'WIFI' && tag !== 'WIFI') {
+          if (Object.keys(bssidRssi).length > 0) {
+            scans.push({ ...bssidRssi });
+            bssidRssi = {};
+          }
+        }
+        lastTag = tag;
+      }
+    }
+    if (Object.keys(bssidRssi).length > 0) scans.push({ ...bssidRssi });
+    return scans.length > 0 ? scans[0] : {};
+  };
+
+  const loadApsCsv = (file: File) => {
+    setApsCsv(file);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = String(e.target?.result || '');
+      const parsed: APInfo[] = [];
+      text.split(/\r?\n/).forEach((line) => {
+        const row = line.trim().split(',').map((v) => v.trim());
+        if (row.length >= 4 && row[0]) {
+          parsed.push({ ssid: row[0], x: Number(row[1]), y: Number(row[2]), bssid: row[3] });
+        }
+      });
+      setApPoints(parsed);
+    };
+    reader.readAsText(file);
+  };
+
+  const loadRefPtsCsv = (file: File) => {
+    setRefPtsCsv(file);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = String(e.target?.result || '');
+      const parsed: RefPoint[] = [];
+      text.split(/\r?\n/).forEach((line) => {
+        const row = line.trim().split(',').map((v) => v.trim());
+        if (row.length >= 4 && row[0]) {
+          parsed.push({ id: Number(row[0]), x: Number(row[1]), y: Number(row[2]), filetag: row[3] });
+        }
+      });
+      setRefPoints(parsed);
+    };
+    reader.readAsText(file);
+  };
+
+  const loadLogFiles = (files: File[]) => {
+    setLogFiles(files);
+    const scans: LogScan[] = [];
+    let done = 0;
+
+    files.forEach((f) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const content = String(e.target?.result || '');
+        const bssidRssi = parseWifiScan(content);
+        const filetag = refPoints.find((r) => f.name.includes(r.filetag))?.filetag ?? f.name;
+        const distances = apPoints.map((ap) => {
+          const rssi = bssidRssi[ap.bssid];
+          return Number.isFinite(rssi) ? Number(pathLossDistance(rssi, rssi0, pathLossExp).toFixed(3)) : NaN;
+        });
+        scans.push({ filetag, fileName: f.name, bssidRssi, distances });
+        done += 1;
+        if (done === files.length) {
+          setLogScans(scans);
+          setSelectedLog(scans[0]?.fileName ?? null);
+        }
+      };
+      reader.readAsText(f);
+    });
+  };
 
   const handleMapFile = (f: File) => {
     setMapImage(f);
@@ -147,18 +246,18 @@ function TrilaterationPanel() {
 
             {/* APs CSV */}
             <input ref={apsRef} type="file" accept=".csv" className="hidden"
-              onChange={(e) => e.target.files?.[0] && setApsCsv(e.target.files[0])} />
+              onChange={(e) => e.target.files?.[0] && loadApsCsv(e.target.files[0])} />
             <button onClick={() => apsRef.current?.click()}
               className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs mb-2 transition-colors hover:opacity-80"
               style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
-              <Wifi size={14} className={apsCsv ? 'text-green-500' : 'opacity-40'} />
-              <span className="flex-1 text-left truncate">{apsCsv ? apsCsv.name : 'Access Points CSV (ssid,x,y,bssid)'}</span>
-              {apsCsv && <span className="text-green-500 text-[10px]">✓</span>}
+              <Wifi size={14} className={apPoints.length > 0 ? 'text-green-500' : 'opacity-40'} />
+              <span className="flex-1 text-left truncate">{apPoints.length > 0 ? `${apPoints.length} AP(s) uploaded` : 'Access Points CSV (ssid,x,y,bssid)'}</span>
+              {apPoints.length > 0 && <span className="text-green-500 text-[10px]">✓</span>}
             </button>
 
             {/* Ref Points CSV */}
             <input ref={refRef} type="file" accept=".csv" className="hidden"
-              onChange={(e) => e.target.files?.[0] && setRefPtsCsv(e.target.files[0])} />
+              onChange={(e) => e.target.files?.[0] && loadRefPtsCsv(e.target.files[0])} />
             <button onClick={() => refRef.current?.click()}
               className="w-full flex items-center gap-2 px-3 py-2.5 rounded-lg text-xs mb-2 transition-colors hover:opacity-80"
               style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
@@ -468,7 +567,7 @@ function TrilaterationPanel() {
 
 // ─── Fingerprinting Panel (Lab02-style file-based) ───────────────
 
-function FingerprintPanel() {
+export function FingerprintPanel() {
   // File state
   const [refPtsCsv, setRefPtsCsv] = useState<File | null>(null);
   const [testPtsCsv, setTestPtsCsv] = useState<File | null>(null);
@@ -961,7 +1060,7 @@ function FingerprintPanel() {
 
 // ─── Placeholder ─────────────────────────────────────────────────
 
-function PlaceholderPanel({ name }: { name: string }) {
+export function PlaceholderPanel({ name }: { name: string }) {
   return (
     <div className="flex items-center justify-center h-64">
       <div className="text-center">
