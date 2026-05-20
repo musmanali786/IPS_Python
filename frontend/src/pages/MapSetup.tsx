@@ -5,7 +5,6 @@ import type {
   FloorMapResponse,
   FloorMapListItem,
   PointSchema,
-  CalibrationResponse,
 } from '../api';
 import { Upload, MousePointer2, Ruler, Crosshair, Trash2 } from 'lucide-react';
 

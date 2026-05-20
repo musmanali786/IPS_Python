@@ -14,7 +14,8 @@ import {
 import Dashboard from './pages/Dashboard';
 import MapSetup from './pages/MapSetup';
 import DatasetManager from './pages/DatasetManager';
-import ExperimentLab, { TrilaterationPanel, FingerprintPanel, PlaceholderPanel } from './pages/ExperimentLab';
+import ExperimentLab from './pages/ExperimentLab';
+import { ExperimentTrilaterationLab, ExperimentFingerprintingLab, PlaceholderLab } from './pages/experiments';
 import ResultsGallery from './pages/ResultsGallery';
 import MapBuilder from './pages/MapBuilder';
 import SignalAnalyzer from './pages/SignalAnalyzer';
@@ -90,12 +91,12 @@ export default function App() {
             <Route path="/datasets" element={<DatasetManager />} />
             <Route path="/lab/*" element={<ExperimentLab />}>
               <Route index element={<Navigate to="trilateration" replace />} />
-              <Route path="trilateration" element={<TrilaterationPanel />} />
-              <Route path="fingerprint" element={<FingerprintPanel />} />
-              <Route path="pdr" element={<PlaceholderPanel name="Pedestrian Dead Reckoning" />} />
-              <Route path="ble" element={<PlaceholderPanel name="BLE Kalman Smoothing" />} />
-              <Route path="ftm" element={<PlaceholderPanel name="FTM Multilateration" />} />
-              <Route path="dfp" element={<PlaceholderPanel name="Device-Free Positioning" />} />
+              <Route path="trilateration" element={<ExperimentTrilaterationLab />} />
+              <Route path="fingerprint" element={<ExperimentFingerprintingLab />} />
+              <Route path="pdr" element={<PlaceholderLab name="Pedestrian Dead Reckoning" description="PDR uses accelerometer and gyroscope data to track position changes." />} />
+              <Route path="ble" element={<PlaceholderLab name="BLE Kalman Smoothing" description="Kalman filter-based smoothing for Bluetooth Low Energy positioning." />} />
+              <Route path="ftm" element={<PlaceholderLab name="FTM Multilateration" description="Fine Time Measurement based multilateration using WiFi 802.11mc." />} />
+              <Route path="dfp" element={<PlaceholderLab name="Device-Free Positioning" description="WiFi-based device-free positioning using channel state information." />} />
             </Route>
             <Route path="/results" element={<ResultsGallery />} />
           </Routes>
