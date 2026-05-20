@@ -1,7 +1,7 @@
 import sys
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QTabWidget, QPushButton)
-from digitizer_tab import GraphDigitizerTab
-from preview_tab import PreviewTab
+from resources.graph_digitizer.digitizer_tab import GraphDigitizerTab
+from resources.graph_digitizer.preview_tab import PreviewTab
 
 class GraphDigitizer(QMainWindow):
     def __init__(self):
