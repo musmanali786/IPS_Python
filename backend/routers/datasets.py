@@ -151,6 +151,24 @@ def get_schemas():
     return DATASET_SCHEMAS
 
 
+@router.get("/{dataset_id}", response_model=DatasetUploadResponse)
+def get_dataset(dataset_id: int, db: Session = Depends(get_db)):
+    """Return dataset details (name, type, columns, row count)."""
+    dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()
+    if not dataset:
+        raise HTTPException(404, "Dataset not found")
+    meta = dataset.metadata_info or {}
+    return DatasetUploadResponse(
+        id=dataset.id,
+        name=dataset.name,
+        data_type=dataset.data_type,
+        filename=dataset.filename,
+        row_count=meta.get("row_count", 0),
+        columns=meta.get("columns", []),
+        created_at=dataset.created_at,
+    )
+
+
 @router.delete("/{dataset_id}")
 def delete_dataset(dataset_id: int, db: Session = Depends(get_db)):
     dataset = db.query(Dataset).filter(Dataset.id == dataset_id).first()

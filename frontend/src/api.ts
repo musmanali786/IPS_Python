@@ -151,6 +151,7 @@ export interface LabTrilaterationResponse {
   access_points: LabAPInfo[];
   ref_points: LabRefPoint[];
   results: LabRefResult[];
+  skipped_ref_points: string[];
   room_width: number;
   room_height: number;
   rssi0: number;
@@ -184,6 +185,8 @@ export interface LabFPTestResult {
 export interface LabFingerprintingResponse {
   ref_points: LabFPRefPoint[];
   test_results: LabFPTestResult[];
+  skipped_ref_points: string[];
+  skipped_test_points: string[];
   fp_db_size: number;
   total_unique_bssids: number;
   algorithm: string;
@@ -194,6 +197,68 @@ export interface LabFingerprintingResponse {
   errors_m: number[];
   cdf: { x: number[]; y: number[] };
   statistics: Record<string, number>;
+}
+
+// ─── PDR / BLE / FTM / DFP ──────────────────────────────────────
+
+export interface FingerprintRequest {
+  radio_map: number[][];
+  radio_map_coords: number[][];
+  test_scan: number[];
+  k?: number;
+  algorithm?: 'knn' | 'wknn';
+}
+
+export interface PDRRequest {
+  acc_x: number[];
+  acc_y: number[];
+  acc_z: number[];
+  gyro_z?: number[];
+  mag_heading?: number[];
+  sampling_rate: number;
+  peak_height: number;
+  peak_distance: number;
+  stride_method: 'weinberg' | 'height';
+  user_height_m: number;
+  weinberg_K: number;
+  complementary_alpha: number;
+  start_x: number;
+  start_y: number;
+}
+
+export interface PDRResponse {
+  trajectory: number[][];
+  step_count: number;
+  stride_lengths: number[];
+}
+
+export interface BLESmoothRequest {
+  rssi_values: number[];
+  method: 'kalman' | 'moving_average';
+  process_noise: number;
+  measurement_noise: number;
+  window_size: number;
+}
+
+export interface BLESmoothResponse {
+  original: number[];
+  smoothed: number[];
+}
+
+export interface FTMRequest {
+  anchors: { x: number; y: number; distance_m: number }[];
+}
+
+export interface DFPRequest {
+  baseline_rssi: number[][];
+  active_rssi: number[][];
+  threshold_sigma: number;
+}
+
+export interface DFPResponse {
+  affected_links: number[];
+  variance_ratio: number[];
+  z_scores: number[];
 }
 
 export const experimentsApi = {
@@ -250,11 +315,11 @@ export const experimentsApi = {
     });
   },
 
-  fingerprint: (data: any) => api.post<PositionResponse>('/experiments/fingerprint', data),
-  pdr: (data: any) => api.post('/experiments/pdr', data),
-  bleSmooth: (data: any) => api.post('/experiments/ble/smooth', data),
-  ftm: (data: any) => api.post<PositionResponse>('/experiments/ftm', data),
-  dfp: (data: any) => api.post('/experiments/dfp', data),
+  fingerprint: (data: FingerprintRequest) => api.post<PositionResponse>('/experiments/fingerprint', data),
+  pdr: (data: PDRRequest) => api.post<PDRResponse>('/experiments/pdr', data),
+  bleSmooth: (data: BLESmoothRequest) => api.post<BLESmoothResponse>('/experiments/ble/smooth', data),
+  ftm: (data: FTMRequest) => api.post<PositionResponse>('/experiments/ftm', data),
+  dfp: (data: DFPRequest) => api.post<DFPResponse>('/experiments/dfp', data),
   errorAnalysis: (data: { estimated: number[][]; ground_truth: number[][] }) =>
     api.post('/experiments/analysis/error', data),
 };

@@ -2,16 +2,8 @@ import { useState, useRef, useMemo } from 'react';
 import { experimentsApi } from '../../api';
 import type { LabTrilaterationResponse } from '../../api';
 import { FlaskConical, Upload, FileText, Wifi, MapPin, Play, Eye } from 'lucide-react';
-import Plot from 'react-plotly.js';
 
 type APInfo = { ssid: string; x: number; y: number; bssid: string };
-type RefPoint = { id: number; x: number; y: number; filetag: string };
-type LogScan = {
-  filetag: string;
-  fileName: string;
-  bssidRssi: Record<string, number>;
-  distances: number[];
-};
 
 const COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
 
@@ -23,14 +15,6 @@ export default function ExperimentTrilaterationLab() {
   const [mapImage, setMapImage] = useState<File | null>(null);
   const [mapUrl, setMapUrl] = useState<string | null>(null);
   const [apPoints, setApPoints] = useState<APInfo[]>([]);
-    // @ts-ignore
-  const [refPoints, setRefPoints] = useState<RefPoint[]>([]);
-    // @ts-ignore
-  const [logScans, setLogScans] = useState<LogScan[]>([]);
-    // @ts-ignore
-  const [selectedLog, setSelectedLog] = useState<string | null>(null);
-    // @ts-ignore
-  const [selectedRefId, setSelectedRefId] = useState<number | null>(null);
   const [rssi0, setRssi0] = useState(-32);
   const [pathLossExp, setPathLossExp] = useState(2.45);
   const [solver, setSolver] = useState<'ls' | 'wls'>('ls');
@@ -48,38 +32,6 @@ export default function ExperimentTrilaterationLab() {
   const refRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLInputElement>(null);
   const mapRef = useRef<HTMLInputElement>(null);
-
-    // @ts-ignore
-  const pathLossDistance = (rssi: number, rssi0: number, n: number) => {
-    const diff = rssi0 - rssi;
-    return 10 ** (diff / (10 * n));
-  };
-
-    // @ts-ignore
-  const parseWifiScan = (content: string): Record<string, number> => {
-    const lines = content.split(/\r?\n/);
-    let lastTag = 'NONE';
-    let bssidRssi: Record<string, number> = {};
-    const scans: Record<string, number>[] = [];
-
-    for (const line of lines) {
-      const cells = line.split(';');
-      if (cells.length > 4) {
-        const tag = cells[0];
-        if (tag === 'WIFI') {
-          bssidRssi[cells[4]] = Number(cells[5]);
-        } else if (lastTag === 'WIFI' && tag !== 'WIFI') {
-          if (Object.keys(bssidRssi).length > 0) {
-            scans.push({ ...bssidRssi });
-            bssidRssi = {};
-          }
-        }
-        lastTag = tag;
-      }
-    }
-    if (Object.keys(bssidRssi).length > 0) scans.push({ ...bssidRssi });
-    return scans.length > 0 ? scans[0] : {};
-  };
 
   const loadApsCsv = (file: File) => {
     setApsCsv(file);
@@ -100,19 +52,6 @@ export default function ExperimentTrilaterationLab() {
 
   const loadRefPtsCsv = (file: File) => {
     setRefPtsCsv(file);
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const text = String(e.target?.result || '');
-      const parsed: RefPoint[] = [];
-      text.split(/\r?\n/).forEach((line) => {
-        const row = line.trim().split(',').map((v) => v.trim());
-        if (row.length >= 4 && row[0]) {
-          parsed.push({ id: Number(row[0]), x: Number(row[1]), y: Number(row[2]), filetag: row[3] });
-        }
-      });
-      setRefPoints(parsed);
-    };
-    reader.readAsText(file);
   };
 
   const handleMapFile = (f: File) => {
@@ -139,8 +78,9 @@ export default function ExperimentTrilaterationLab() {
       });
       setResult(r.data);
       setSelectedRef(null);
-    } catch (e: any) {
-      alert(e?.response?.data?.detail || 'Error running experiment');
+    } catch (e) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      alert(err.response?.data?.detail || 'Error running experiment');
     }
     setLoading(false);
   };
@@ -157,14 +97,6 @@ export default function ExperimentTrilaterationLab() {
     const errs = result.results.filter((r) => r.error !== null).map((r) => r.error!);
     return errs.length > 0 ? errs.reduce((a, b) => a + b, 0) / errs.length : 0;
   }, [result]);
-
-  const statsData = useMemo(() => {
-    return null;
-  }, []);
-
-  const cdfData = useMemo(() => {
-    return { x: [], y: [] };
-  }, []);
 
   return (
     <div>
@@ -281,6 +213,15 @@ export default function ExperimentTrilaterationLab() {
         <div className="xl:col-span-2">
           {result ? (
             <div className="space-y-4">
+              {/* Skipped ref points notice */}
+              {result.skipped_ref_points.length > 0 && (
+                <div className="rounded-lg px-4 py-3 text-xs"
+                  style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid #f59e0b', color: '#f59e0b' }}>
+                  Skipped {result.skipped_ref_points.length} reference point(s) with no matching log file:{' '}
+                  <strong>{result.skipped_ref_points.join(', ')}</strong>. Results below cover only the uploaded logs.
+                </div>
+              )}
+
               {/* Stats bar */}
               <div className="grid grid-cols-4 gap-3">
                 {[
@@ -433,56 +374,6 @@ export default function ExperimentTrilaterationLab() {
                   </g>
                 </svg>
               </div>
-
-              {/* CDF Plot - Not available for trilateration yet */}
-              {false && cdfData.x && cdfData.x.length > 0 && (
-                <div className="rounded-xl p-4" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
-                  <h3 className="font-semibold text-sm mb-3">Cumulative Distribution Function (CDF)</h3>
-                  {/* @ts-ignore - react-plotly.js typing issues */}
-                  <Plot
-                    data={[
-                      {
-                        x: [0],
-                        y: [0],
-                        type: 'scatter' as const,
-                        mode: 'lines',
-                        name: 'CDF',
-                        line: { color: '#3b82f6', width: 2 },
-                      },
-                    ]}
-                    layout={{
-                      xaxis: { title: 'Positioning Error (m)', showgrid: true },
-                      yaxis: { title: 'Cumulative Probability', range: [0, 1] },
-                      margin: { l: 50, r: 20, t: 30, b: 40 },
-                      hovermode: 'closest',
-                      paper_bgcolor: 'transparent',
-                      plot_bgcolor: 'transparent',
-                      font: { color: 'var(--text-primary)' },
-                    }}
-                    config={{ responsive: true }}
-                    style={{ height: '350px' }}
-                  />
-                </div>
-              )}
-
-              {/* Stats Cards - Not available for trilateration yet */}
-              {false && statsData && (
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                  {[
-                    { label: 'Mean Error', key: 'mean' },
-                    { label: 'Median Error', key: 'median' },
-                    { label: 'Std Dev', key: 'std_dev' },
-                    { label: '75th %ile', key: 'p75' },
-                    { label: '90th %ile', key: 'p90' },
-                  ].map((s) => (
-                    <div key={s.label} className="rounded-lg px-3 py-2 text-center"
-                      style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
-                      <p className="text-sm font-bold">{(statsData?.[s.key] ?? 0).toFixed(2)} m</p>
-                      <p className="text-[10px]" style={{ color: 'var(--text-secondary)' }}>{s.label}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
 
               {/* Results Table */}
               <div className="rounded-xl p-4" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)' }}>

@@ -112,6 +112,7 @@ class LabTrilaterationResponse(BaseModel):
     access_points: List[dict]        # [{ssid, x, y, bssid}, ...]
     ref_points: List[dict]           # [{id, x, y, filetag}, ...]
     results: List[LabTrilaterationRefResult]
+    skipped_ref_points: List[str] = []   # filetags with no matching uploaded log
     room_width: float
     room_height: float
     rssi0: float
@@ -161,6 +162,7 @@ async def run_trilateration_lab(
 
     # ── Process each reference point ──────────────────────────────
     results: List[LabTrilaterationRefResult] = []
+    skipped_ref_points: List[str] = []
     for ref in ref_ptsinfo:
         # Find matching log file by filetag in filename
         filetag = ref["filetag"]
@@ -171,8 +173,9 @@ async def run_trilateration_lab(
                 break
 
         if matched_content is None:
-            raise HTTPException(400, f"No log file found matching filetag '{filetag}'. "
-                                     f"Uploaded files: {[lf.filename for lf in log_files]}")
+            # No log uploaded for this ref point — skip it rather than failing the run
+            skipped_ref_points.append(filetag)
+            continue
 
         bssid_rssi = _parse_wifi_scan(matched_content)
 
@@ -209,10 +212,20 @@ async def run_trilateration_lab(
             error=round(error, 3) if error is not None else None,
         ))
 
+    if not results:
+        raise HTTPException(
+            400,
+            "No uploaded log file matched any reference point filetag. "
+            f"Filetags in CSV: {[r['filetag'] for r in ref_ptsinfo]}; "
+            f"uploaded files: {list(log_contents.keys())}",
+        )
+
     return LabTrilaterationResponse(
         access_points=ap_infos,
-        ref_points=[{"id": r["id"], "x": r["x"], "y": r["y"], "filetag": r["filetag"]} for r in ref_ptsinfo],
+        ref_points=[{"id": r["id"], "x": r["x"], "y": r["y"], "filetag": r["filetag"]}
+                    for r in ref_ptsinfo if r["filetag"] not in skipped_ref_points],
         results=results,
+        skipped_ref_points=skipped_ref_points,
         room_width=room_width,
         room_height=room_height,
         rssi0=rssi0,
@@ -267,6 +280,8 @@ class LabFPRefPoint(BaseModel):
 class LabFingerprintingResponse(BaseModel):
     ref_points: List[LabFPRefPoint]
     test_results: List[LabFPTestResult]
+    skipped_ref_points: List[str] = []    # filetags with no matching training log
+    skipped_test_points: List[str] = []   # filetags with no matching test log
     fp_db_size: int
     total_unique_bssids: int
     algorithm: str
@@ -315,6 +330,7 @@ async def run_fingerprinting_lab(
     fp_coords: Dict[str, Tuple[float, float]] = {}
     ref_point_models: List[LabFPRefPoint] = []
 
+    skipped_ref_points: List[str] = []
     for ref in ref_infos:
         filetag = ref["filetag"]
         matched_content = None
@@ -323,11 +339,9 @@ async def run_fingerprinting_lab(
                 matched_content = content
                 break
         if matched_content is None:
-            raise HTTPException(
-                400,
-                f"No training log file matching filetag '{filetag}'. "
-                f"Uploaded: {list(train_contents.keys())}",
-            )
+            # No training log for this ref point — skip it rather than failing the run
+            skipped_ref_points.append(filetag)
+            continue
 
         all_scans = _parse_all_wifi_scans(matched_content)
         if not all_scans:
@@ -345,6 +359,14 @@ async def run_fingerprinting_lab(
             id=rid, x=ref["x"], y=ref["y"],
             filetag=filetag, num_bssids=len(fingerprint),
         ))
+
+    if not fp_db:
+        raise HTTPException(
+            400,
+            "No uploaded training log matched any reference point filetag. "
+            f"Filetags in CSV: {[r['filetag'] for r in ref_infos]}; "
+            f"uploaded files: {list(train_contents.keys())}",
+        )
 
     # ── Parse Test Points CSV ─────────────────────────────────────
     test_content = (await testpts_csv.read()).decode("utf-8")
@@ -373,6 +395,7 @@ async def run_fingerprinting_lab(
     test_results: List[LabFPTestResult] = []
     errors_m: List[float] = []
 
+    skipped_test_points: List[str] = []
     for tp in test_infos:
         filetag = tp["filetag"]
         matched_content = None
@@ -381,11 +404,9 @@ async def run_fingerprinting_lab(
                 matched_content = content
                 break
         if matched_content is None:
-            raise HTTPException(
-                400,
-                f"No test log file matching filetag '{filetag}'. "
-                f"Uploaded: {list(test_contents.keys())}",
-            )
+            # No test log for this point — skip it rather than failing the run
+            skipped_test_points.append(filetag)
+            continue
 
         all_scans = _parse_all_wifi_scans(matched_content)
         if not all_scans:
@@ -430,6 +451,14 @@ async def run_fingerprinting_lab(
             rssi_error=round(rssi_err, 2) if rssi_err is not None else None,
         ))
 
+    if not test_results:
+        raise HTTPException(
+            400,
+            "No uploaded test log matched any test point filetag. "
+            f"Filetags in CSV: {[t['filetag'] for t in test_infos]}; "
+            f"uploaded files: {list(test_contents.keys())}",
+        )
+
     # ── CDF & statistics ──────────────────────────────────────────
     if errors_m:
         err_arr = np.array(errors_m)
@@ -442,6 +471,8 @@ async def run_fingerprinting_lab(
     return LabFingerprintingResponse(
         ref_points=ref_point_models,
         test_results=test_results,
+        skipped_ref_points=skipped_ref_points,
+        skipped_test_points=skipped_test_points,
         fp_db_size=len(fp_db),
         total_unique_bssids=len(all_unique_bssids),
         algorithm=algorithm,
@@ -531,6 +562,9 @@ def run_pdr(req: PDRRequest):
             dt,
             req.complementary_alpha,
         )
+    elif req.gyro_z:
+        # Gyro-only: integrate yaw rate to get heading
+        headings = np.cumsum(np.array(req.gyro_z) * dt)
     elif req.mag_heading:
         headings = np.array(req.mag_heading)
     else:
@@ -609,8 +643,19 @@ class DFPResponse(BaseModel):
 
 @router.post("/dfp", response_model=DFPResponse)
 def run_dfp(req: DFPRequest):
-    baseline = np.array(req.baseline_rssi, dtype=float)
-    active = np.array(req.active_rssi, dtype=float)
+    try:
+        baseline = np.array(req.baseline_rssi, dtype=float)
+        active = np.array(req.active_rssi, dtype=float)
+    except ValueError:
+        raise HTTPException(400, "baseline_rssi and active_rssi rows must all have the same length")
+
+    if baseline.ndim != 2 or active.ndim != 2:
+        raise HTTPException(400, "baseline_rssi and active_rssi must be non-empty 2-D matrices (time × links)")
+    if baseline.shape[1] != active.shape[1]:
+        raise HTTPException(
+            400,
+            f"Link count mismatch: baseline has {baseline.shape[1]} links, active has {active.shape[1]}",
+        )
 
     b_mean, b_std = compute_baseline(baseline)
     result = detect_anomaly(active, b_mean, b_std, req.threshold_sigma)
@@ -635,6 +680,8 @@ class ErrorAnalysisResponse(BaseModel):
 def run_error_analysis(req: ErrorAnalysisRequest):
     if len(req.estimated) != len(req.ground_truth):
         raise HTTPException(400, "estimated and ground_truth must have equal length")
+    if not req.estimated:
+        raise HTTPException(400, "estimated and ground_truth must not be empty")
 
     est = [(p[0], p[1]) for p in req.estimated]
     gt = [(p[0], p[1]) for p in req.ground_truth]

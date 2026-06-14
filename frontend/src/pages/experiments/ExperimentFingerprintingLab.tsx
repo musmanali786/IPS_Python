@@ -57,8 +57,9 @@ export default function ExperimentFingerprintingLab() {
       });
       setResult(r.data);
       setSelectedTest(null);
-    } catch (e: any) {
-      alert(e?.response?.data?.detail || 'Error running fingerprinting experiment');
+    } catch (e) {
+      const err = e as { response?: { data?: { detail?: string } } };
+      alert(err.response?.data?.detail || 'Error running fingerprinting experiment');
     }
     setLoading(false);
   };
@@ -241,6 +242,21 @@ export default function ExperimentFingerprintingLab() {
         <div className="xl:col-span-2">
           {result ? (
             <div className="space-y-4">
+              {/* Skipped points notice */}
+              {(result.skipped_ref_points.length > 0 || result.skipped_test_points.length > 0) && (
+                <div className="rounded-lg px-4 py-3 text-xs"
+                  style={{ background: 'rgba(245,158,11,0.12)', border: '1px solid #f59e0b', color: '#f59e0b' }}>
+                  {result.skipped_ref_points.length > 0 && (
+                    <p>Skipped {result.skipped_ref_points.length} reference point(s) with no matching training log:{' '}
+                      <strong>{result.skipped_ref_points.join(', ')}</strong></p>
+                  )}
+                  {result.skipped_test_points.length > 0 && (
+                    <p>Skipped {result.skipped_test_points.length} test point(s) with no matching test log:{' '}
+                      <strong>{result.skipped_test_points.join(', ')}</strong></p>
+                  )}
+                </div>
+              )}
+
               {/* Stats bar */}
               <div className="grid grid-cols-5 gap-3">
                 {[
@@ -354,17 +370,16 @@ export default function ExperimentFingerprintingLab() {
               {cdfData.x && cdfData.x.length > 0 && (
                 <div className="rounded-xl p-4" style={{ background: 'var(--bg-primary)', border: '1px solid var(--border)' }}>
                   <h3 className="font-semibold text-sm mb-3">Cumulative Distribution Function (CDF)</h3>
-                  {/* @ts-ignore - react-plotly.js typing issues */}
                   <Plot
                     data={[
                       {
                         x: cdfData.x,
                         y: cdfData.y,
-                        type: 'scatter' as const,
-                        mode: 'lines' as const,
+                        type: 'scatter',
+                        mode: 'lines',
                         name: 'CDF',
                         line: { color: '#3b82f6', width: 2 },
-                      } as any,
+                      },
                       ...(statsData?.['median'] ? [{
                         x: [statsData['median'], statsData['median']],
                         y: [0, 1],
@@ -372,11 +387,11 @@ export default function ExperimentFingerprintingLab() {
                         mode: 'lines' as const,
                         name: `Median: ${statsData['median'].toFixed(2)}m`,
                         line: { color: '#10b981', width: 2, dash: 'dash' as const },
-                      } as any] : []),
+                      }] : []),
                     ]}
                     layout={{
-                      xaxis: { title: 'Positioning Error (m)', showgrid: true },
-                      yaxis: { title: 'Cumulative Probability', range: [0, 1] },
+                      xaxis: { title: { text: 'Positioning Error (m)' }, showgrid: true },
+                      yaxis: { title: { text: 'Cumulative Probability' }, range: [0, 1] },
                       margin: { l: 50, r: 20, t: 30, b: 40 },
                       hovermode: 'closest',
                       paper_bgcolor: 'transparent',
@@ -395,7 +410,7 @@ export default function ExperimentFingerprintingLab() {
                   {[
                     { label: 'Mean Error', key: 'mean' },
                     { label: 'Median Error', key: 'median' },
-                    { label: 'Std Dev', key: 'std_dev' },
+                    { label: 'Std Dev', key: 'std' },
                     { label: '75th %ile', key: 'p75' },
                     { label: '90th %ile', key: 'p90' },
                   ].map((s) => (
