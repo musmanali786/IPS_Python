@@ -23,3 +23,11 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24  # 24 hours
 MAX_UPLOAD_SIZE_MB = 50
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".svg", ".bmp", ".gif"}
 ALLOWED_DATA_EXTENSIONS = {".csv", ".json"}
+
+# Ingest API keys for the mobile collector app (comma-separated).
+# Override in production via the INGEST_API_KEYS env var.
+INGEST_API_KEYS = {
+    k.strip()
+    for k in os.getenv("INGEST_API_KEYS", "dev-key").split(",")
+    if k.strip()
+}

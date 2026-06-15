@@ -1,0 +1,56 @@
+name: ips_collector
+description: "IPS Research Platform field data collection app"
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.7
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # State management
+  provider: ^6.1.2
+
+  # Persistence & files
+  shared_preferences: ^2.3.2
+  path_provider: ^2.1.4
+  share_plus: ^10.0.2
+
+  # Permissions
+  permission_handler: ^11.3.1
+
+  # Networking
+  dio: ^5.7.0
+
+  # Sensors (ACCE, GYRO, MAGN, PRES/barometer)
+  sensors_plus: ^6.1.0
+  # GNSS / GPS
+  geolocator: ^13.0.1
+  # WiFi scanning
+  wifi_scan: ^0.4.1+2
+  # BLE beacons
+  flutter_blue_plus: ^1.32.12
+  # Light sensor (Android)
+  light: ^4.0.1
+  # Proximity sensor
+  proximity_sensor: ^1.3.7
+  # Sound level (SOUN)
+  noise_meter: ^5.0.2
+
+  # Keep screen awake during continuous surveys
+  wakelock_plus: ^1.2.8
+
+  # Utilities
+  intl: ^0.19.0
+  cached_network_image: ^3.4.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

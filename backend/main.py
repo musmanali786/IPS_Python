@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import CORS_ORIGINS
 from database import init_db
-from routers import maps, datasets, experiments, buildings, signal
+from routers import maps, datasets, experiments, buildings, signal, ingest
 
 app = FastAPI(
     title="IPS Research Platform",
@@ -28,6 +28,7 @@ app.include_router(datasets.router)
 app.include_router(experiments.router)
 app.include_router(buildings.router)
 app.include_router(signal.router)
+app.include_router(ingest.router)
 
 
 @app.on_event("startup")
