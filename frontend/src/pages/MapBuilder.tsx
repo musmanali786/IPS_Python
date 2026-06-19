@@ -365,6 +365,15 @@ export default function MapBuilder() {
     URL.revokeObjectURL(url);
   };
 
+  // Download the ZIP bundle (map.json + floor images) for the mobile app.
+  const exportZip = () => {
+    if (!activeBuilding) return;
+    const a = document.createElement('a');
+    a.href = buildingsApi.exportZipUrl(activeBuilding.id);
+    a.download = `${activeBuilding.name.replace(/\s+/g, '_')}_map.zip`;
+    a.click();
+  };
+
   // ─────────── Refresh helper ───────────
   const refreshFloor = async () => {
     if (!activeBuilding) return;
@@ -740,11 +749,16 @@ export default function MapBuilder() {
 
         {/* Export button */}
         {activeBuilding && (
-          <div className="p-4 border-t" style={{ borderColor: 'var(--border)' }}>
+          <div className="p-4 border-t space-y-2" style={{ borderColor: 'var(--border)' }}>
             <button onClick={exportJSON}
                     className="w-full flex items-center justify-center gap-2 py-2 rounded text-xs font-medium text-white"
                     style={{ background: '#059669' }}>
               <Download size={14} /> Export Master JSON
+            </button>
+            <button onClick={exportZip}
+                    className="w-full flex items-center justify-center gap-2 py-2 rounded text-xs font-medium text-white"
+                    style={{ background: '#2563eb' }}>
+              <Download size={14} /> Export Map ZIP (for mobile)
             </button>
           </div>
         )}

@@ -474,6 +474,10 @@ export const buildingsApi = {
   // Export
   exportJSON: (buildingId: number) =>
     api.get<MasterMapJSON>(`/buildings/${buildingId}/export`),
+  // Direct download URL for the ZIP bundle (map.json + floor images) consumed
+  // by the mobile collector app.
+  exportZipUrl: (buildingId: number) =>
+    `/api/buildings/${buildingId}/export.zip`,
 };
 
 // ─── Signal Analyzer / Heatmap ───────────────────────────────────

@@ -1,10 +1,10 @@
 """Router for Map Builder — Buildings, Floors, Paths, Access Points."""
 
-import math, os, shutil
+import io, json, math, os, re, shutil, zipfile
 from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.orm import Session, joinedload
 
 from database import get_db
@@ -314,6 +314,42 @@ def export_master_json(building_id: int, db: Session = Depends(get_db)):
         building_id=b.id,
         building_name=b.name,
         floors=[_floor_response(f) for f in b.floors],
+    )
+
+
+@router.get("/{building_id}/export.zip")
+def export_master_zip(building_id: int, db: Session = Depends(get_db)):
+    """Bundle the master map JSON + floor-plan images into a ZIP for the
+    mobile collector app to import.
+
+    Layout:
+      map.json
+      images/floor_<floor_id><ext>
+    """
+    b = _get_building(building_id, db)
+    master = MasterMapJSON(
+        building_id=b.id,
+        building_name=b.name,
+        floors=[_floor_response(f) for f in b.floors],
+    )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr(
+            "map.json",
+            json.dumps(master.model_dump(), default=str, indent=2),
+        )
+        for f in b.floors:
+            if f.filepath and os.path.exists(f.filepath):
+                ext = os.path.splitext(f.filepath)[1] or ".png"
+                z.write(f.filepath, f"images/floor_{f.id}{ext}")
+    buf.seek(0)
+
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", b.name).strip("_") or f"building_{b.id}"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{safe}_map.zip"'},
     )
 
 
